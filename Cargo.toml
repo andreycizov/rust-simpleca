@@ -1,0 +1,17 @@
+[package]
+name = "simpleca"
+version = "0.1.0"
+authors = ["Andrey Cizov <acizov@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "simpleca"
+path = "src/lib.rs"
+
+[[bin]]
+name = "simplecae"
+path = "src/bin.rs"
+
+[dependencies]
+openssl = "0.10.16"
+clap = "2.32.0"
