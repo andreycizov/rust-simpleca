@@ -9,7 +9,7 @@ name = "simpleca"
 path = "src/lib.rs"
 
 [[bin]]
-name = "simplecae"
+name = "simpleca"
 path = "src/bin.rs"
 
 [dependencies]

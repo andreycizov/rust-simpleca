@@ -16,7 +16,7 @@ fn main() {
                 .about("generates a private key in PEM format")
                 .subcommand(
                     SubCommand::with_name("gen")
-                        .about("generates a private key in PEM format")
+                        .about("generate a private key or a public key")
                         .arg(
                             Arg::with_name("output")
                                 .required(true)
