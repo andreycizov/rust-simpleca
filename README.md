@@ -1,6 +1,6 @@
 # simpleca 
 
-Generate custom CA certificates and sign them.
+Generate custom SSL CA certificates and sign them.
 
 
 ## Usage
