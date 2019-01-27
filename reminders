@@ -1,4 +1,4 @@
 # show cert info
-openssl x509 -in ./build/server.crt -text
+openssl x509  -text -in ./build/server.crt
 # show key info
 openssl rsa -in ./build/server.pem -noout -text

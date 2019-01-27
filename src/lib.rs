@@ -10,8 +10,11 @@ use openssl::x509::extension::*;
 use openssl::bn::{BigNum, MsbOption};
 use openssl::hash::MessageDigest;
 use std::io::{Read, Write, Error as IOError};
-use openssl::nid::Nid;
 use openssl::stack::Stack;
+
+
+pub mod args;
+
 
 pub fn build_privkey() -> Result<PKey<Private>, ErrorStack> {
     let rsa = Rsa::generate(2048)?;
@@ -20,14 +23,11 @@ pub fn build_privkey() -> Result<PKey<Private>, ErrorStack> {
     Ok(privkey)
 }
 
-pub fn build_ca_cert(privkey: &PKey<Private>) -> Result<X509, ErrorStack> {
-    let mut x509_name = X509NameBuilder::new()?;
-    x509_name.append_entry_by_text("C", "US")?;
-    x509_name.append_entry_by_text("ST", "TX")?;
-    x509_name.append_entry_by_text("O", "Some CA organization")?;
-    x509_name.append_entry_by_text("CN", "ca test")?;
-    let x509_name = x509_name.build();
-
+pub fn build_ca_cert(
+    privkey: &PKey<Private>,
+    x509_name: &X509Name,
+    not_before_after: &(Option<Asn1Time>, Option<Asn1Time>),
+) -> Result<X509, ErrorStack> {
     let mut cert_builder = X509::builder()?;
     cert_builder.set_version(2)?;
     let serial_number = {
@@ -39,10 +39,16 @@ pub fn build_ca_cert(privkey: &PKey<Private>) -> Result<X509, ErrorStack> {
     cert_builder.set_subject_name(&x509_name)?;
     cert_builder.set_issuer_name(&x509_name)?;
     cert_builder.set_pubkey(&privkey)?;
-    let not_before = Asn1Time::days_from_now(0)?;
-    cert_builder.set_not_before(&not_before)?;
-    let not_after = Asn1Time::days_from_now(3650)?;
-    cert_builder.set_not_after(&not_after)?;
+
+    let (not_before, not_after) = not_before_after;
+
+    if let Some(not_before) = not_before {
+        cert_builder.set_not_before(&not_before)?;
+    }
+
+    if let Some(not_after) = not_after {
+        cert_builder.set_not_after(&not_after)?;
+     }
 
     cert_builder.append_extension(BasicConstraints::new().critical().ca().build()?)?;
     cert_builder.append_extension(KeyUsage::new()
@@ -62,23 +68,20 @@ pub fn build_ca_cert(privkey: &PKey<Private>) -> Result<X509, ErrorStack> {
 }
 
 /// Make a X509 request with the given private key
-pub fn build_ca_req(
+pub fn build_ca_req<F>(
     privkey: &PKey<Private>,
-) -> Result<X509Req, ErrorStack> {
+    x509_name: &X509Name,
+    map: F,
+) -> Result<X509Req, ErrorStack>
+    where F: FnOnce(&mut X509ReqBuilder) -> Result<(), ErrorStack> {
     let mut req_builder = X509ReqBuilder::new()?;
     req_builder.set_pubkey(&privkey)?;
 
-    let mut x509_name = X509NameBuilder::new()?;
-    x509_name.append_entry_by_text("C", "US")?;
-    x509_name.append_entry_by_text("ST", "TX")?;
-    x509_name.append_entry_by_text("O", "Some organization")?;
-    x509_name.append_entry_by_text("CN", "www.example.com")?;
-    let x509_name = x509_name.build();
     req_builder.set_subject_name(&x509_name)?;
 
     //let mut extensions = Stack::<X509Extension>::new()?;
 
-
+    map(&mut req_builder)?;
 
     //req_builder.add_extensions(&extensions)?;
 
@@ -87,61 +90,13 @@ pub fn build_ca_req(
     Ok(req)
 }
 
-pub fn build_ca_signed_cert_server(
-    ca_cert: &X509Ref,
-    ca_privkey: &PKeyRef<Private>,
-    pubkey: &PKey<Public>,
-    req: &X509Req,
-    dns: Vec<&str>,
-) -> Result<X509, ErrorStack> {
-    build_ca_signed_cert(ca_cert, ca_privkey, pubkey, req, |cert_builder: &mut X509Builder| {
-        cert_builder.append_extension(
-            X509Extension::new_nid(None, None, Nid::NETSCAPE_CERT_TYPE, "SSL Server")?
-        )?;
-
-        cert_builder.append_extension(
-            X509Extension::new_nid(None, None, Nid::NETSCAPE_COMMENT, "Server Certificate")?
-        )?;
-
-        let mut subject_alt_name = SubjectAlternativeName::new();
-
-        for name in dns {
-            subject_alt_name.dns(name);
-        }
-
-        let subject_alt_name = subject_alt_name.build(&cert_builder.x509v3_context(Some(ca_cert), None))?;
-
-        cert_builder.append_extension(subject_alt_name)?;
-
-        Ok(())
-    })
-}
-
-pub fn build_ca_signed_cert_client(
-    ca_cert: &X509Ref,
-    ca_privkey: &PKeyRef<Private>,
-    pubkey: &PKey<Public>,
-    req: &X509Req,
-) -> Result<X509, ErrorStack> {
-    build_ca_signed_cert(ca_cert, ca_privkey, pubkey, req, |cert_builder: &mut X509Builder| {
-        cert_builder.append_extension(
-            X509Extension::new_nid(None, None, Nid::NETSCAPE_CERT_TYPE, "SSL Client")?
-        )?;
-
-        cert_builder.append_extension(
-            X509Extension::new_nid(None, None, Nid::NETSCAPE_COMMENT, "Client Certificate")?
-        )?;
-
-        Ok(())
-    })
-}
-
 pub fn build_ca_signed_cert<F>(
     ca_cert: &X509Ref,
     ca_privkey: &PKeyRef<Private>,
     pubkey: &PKey<Public>,
     req: &X509Req,
-    map: F
+    not_before_after: &(Option<Asn1Time>, Option<Asn1Time>),
+    map: F,
 ) -> Result<X509, ErrorStack>
 where F: FnOnce(&mut X509Builder) -> Result<(), ErrorStack> {
     let mut cert_builder = X509::builder()?;
@@ -157,10 +112,15 @@ where F: FnOnce(&mut X509Builder) -> Result<(), ErrorStack> {
     cert_builder.set_issuer_name(ca_cert.subject_name())?;
     cert_builder.set_pubkey(pubkey)?;
 
-    let not_before = Asn1Time::days_from_now(0)?;
-    cert_builder.set_not_before(&not_before)?;
-    let not_after = Asn1Time::days_from_now(3650)?;
-    cert_builder.set_not_after(&not_after)?;
+    let (not_before, not_after) = not_before_after;
+
+    if let Some(not_before) = not_before {
+        cert_builder.set_not_before(&not_before)?;
+    }
+
+    if let Some(not_after) = not_after {
+        cert_builder.set_not_after(&not_after)?;
+    }
 
     cert_builder.append_extension(BasicConstraints::new().build()?)?;
 
@@ -229,7 +189,7 @@ pub fn pkey_to_file(file: &mut Write, pkey: &PKey<Private>) -> Result<(), LoadEr
     Ok(())
 }
 
-pub fn pkey_public_to_file(file: &mut Write, pkey: &PKey<Public>) -> Result<(), LoadError> {
+pub fn pkey_public_to_file(file: &mut Write, pkey: &PKey<Private>) -> Result<(), LoadError> {
     file.write(pkey.public_key_to_pem()?.as_ref())?;
 
     Ok(())
